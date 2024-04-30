@@ -37,7 +37,27 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         }
     }
     $stmt->close();
-} elseif ($_SERVER["REQUEST_METHOD"] == "DELETE") {
+}
+
+elseif ($_SERVER["REQUEST_METHOD"] == "GET") {
+    $phone = mysqli_real_escape_string($conn, $_GET['phone']);
+    $vendor_id = mysqli_real_escape_string($conn, $_GET['vendor_id']); 
+
+    $stmt = $conn->prepare("SELECT * FROM customers WHERE phone = ? AND vendor_id = ?");
+    $stmt->bind_param("si", $phone, $vendor_id);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    $customer = $result->fetch_assoc();
+
+    if ($customer) {
+        echo json_encode(array("status" => "success", "customer" => $customer));
+    } else {
+        echo json_encode(array("status" => "error", "message" => "No customer found with this phone number and vendor_id"));
+    }
+    $stmt->close();
+}
+
+ elseif ($_SERVER["REQUEST_METHOD"] == "DELETE") {
     $customer_id = mysqli_real_escape_string($conn, $_POST['customer_id']);
     $vendor_id = mysqli_real_escape_string($conn, $_POST['vendor_id']); 
 
