@@ -1,4 +1,3 @@
-// CustomerDetails.php
 <?php
 header("Access-Control-Allow-Origin: *");
 header("Access-Control-Allow-Methods: GET, POST, DELETE");
@@ -6,13 +5,24 @@ header("Access-Control-Allow-Headers: Content-Type");
 
 include '../db_config.php';
 
+session_start();
+
 if ($_SERVER["REQUEST_METHOD"] == "POST") {
+    // CSRF token validation
+    if (!isset($_POST['csrf_token']) || $_POST['csrf_token'] !== $_SESSION['csrf_token']) {
+        http_response_code(403);
+        echo json_encode(array("status" => "error", "message" => "Authentication token validation failed. Hence, new customer details could not be added."));
+        exit();
+    }
+
+    // Proceed with adding customer details
     $name = mysqli_real_escape_string($conn, $_POST['name']);
     $phone = mysqli_real_escape_string($conn, $_POST['phone']);
     $email = mysqli_real_escape_string($conn, $_POST['email']);
     $address = mysqli_real_escape_string($conn, $_POST['address']);
     $vendor_id = mysqli_real_escape_string($conn, $_POST['vendor_id']); 
 
+    // Validation for email and phone number
     if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
         echo json_encode(array("status" => "error", "message" => "Invalid email format"));
         exit();
@@ -37,9 +47,15 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         }
     }
     $stmt->close();
-}
+} elseif ($_SERVER["REQUEST_METHOD"] == "GET") {
+    // CSRF token validation
+    if (!isset($_GET['csrf_token']) || $_GET['csrf_token'] !== $_SESSION['csrf_token']) {
+        http_response_code(403);
+        echo json_encode(array("status" => "error", "message" => "CSRF token validation failed"));
+        exit();
+    }
 
-elseif ($_SERVER["REQUEST_METHOD"] == "GET") {
+    // Proceed with retrieving customer details
     $phone = mysqli_real_escape_string($conn, $_GET['phone']);
     $vendor_id = mysqli_real_escape_string($conn, $_GET['vendor_id']); 
 
@@ -55,9 +71,15 @@ elseif ($_SERVER["REQUEST_METHOD"] == "GET") {
         echo json_encode(array("status" => "error", "message" => "No customer found with this phone number and vendor_id"));
     }
     $stmt->close();
-}
+} elseif ($_SERVER["REQUEST_METHOD"] == "DELETE") {
+    // CSRF token validation
+    if (!isset($_POST['csrf_token']) || $_POST['csrf_token'] !== $_SESSION['csrf_token']) {
+        http_response_code(403);
+        echo json_encode(array("status" => "error", "message" => "CSRF token validation failed"));
+        exit();
+    }
 
- elseif ($_SERVER["REQUEST_METHOD"] == "DELETE") {
+    // Proceed with deleting customer record
     $customer_id = mysqli_real_escape_string($conn, $_POST['customer_id']);
     $vendor_id = mysqli_real_escape_string($conn, $_POST['vendor_id']); 
 
