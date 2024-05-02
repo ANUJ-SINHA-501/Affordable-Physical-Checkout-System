@@ -1,34 +1,65 @@
 <?php
 header("Access-Control-Allow-Origin: *");
-header("Access-Control-Allow-Methods: GET, POST, DELETE");
+header("Access-Control-Allow-Methods: POST");
 header("Access-Control-Allow-Headers: Content-Type");
+
+date_default_timezone_set('Asia/Kolkata');
 
 include '../db_config.php';
 
 session_start();
 
-if ($_SERVER["REQUEST_METHOD"] == "POST") {
-    // CSRF token validation
-    if (!isset($_POST['csrf_token']) || $_POST['csrf_token'] !== $_SESSION['csrf_token']) {
-        http_response_code(403);
-        echo json_encode(array("status" => "error", "message" => "Authentication token validation failed. Hence, product could not be added."));
-        exit();
+
+if (isset($_SESSION['last_service_request_time']) && (time() - $_SESSION['last_service_request_time']) >= 10800) {
+    // Logout the user
+    $vendor_id = $_SESSION['vendor_id'];
+    $stmt = $conn->prepare("UPDATE vendors SET auth_token = NULL, auth_token_time = NULL WHERE vendor_id = ?");
+    $stmt->bind_param("s", $vendor_id);
+    $stmt->execute();
+    
+    if (session_status() == PHP_SESSION_ACTIVE) {
+        session_unset();
+        session_destroy();
     }
 
-    // Proceed with adding product details
-    $product_name = mysqli_real_escape_string($conn, $_POST['product_name']);
-    $price = mysqli_real_escape_string($conn, $_POST['price']);
-    $vendor_id = mysqli_real_escape_string($conn, $_POST['vendor_id']);
-    $inventory = mysqli_real_escape_string($conn, $_POST['inventory']);
-    $barcode = mysqli_real_escape_string($conn, $_POST['barcode']);
+    echo json_encode(array("status" => "error", "message" => "You were inactive for 3 hours. Please login again."));
+    exit();
+}
+
+if ($_SERVER["REQUEST_METHOD"] == "POST") {
+    $data = json_decode(file_get_contents("php://input"), true);
+
+    
+    if (!isset($data['auth_token'])) {
+        error_log("Auth token is missing in the request.");
+        echo json_encode(array("status" => "error", "message" => "Authentication token is missing"));
+        exit();
+    }
+    
+    if ($_SESSION['auth_token'] !== $data['auth_token']) {
+        error_log("Auth token mismatch. Session token: " . $_SESSION['auth_token'] . ", Request token: " . $data['auth_token']);
+        echo json_encode(array("status" => "error", "message" => "Authentication token validation failed. Hence, new product could not be added."));
+        exit();
+    }
     
 
-    $stmt = $conn->prepare("INSERT INTO products (product_name, price, vendor_id, inventory, barcode) VALUES (?, ?, ?, ?, ?)");
-    $stmt->bind_param("sdiss", $product_name, $price, $vendor_id, $inventory, $barcode);
+    
+    $product_name = mysqli_real_escape_string($conn, $data['product_name']);
+    $price = mysqli_real_escape_string($conn, $data['price']);
+    $vendor_id = mysqli_real_escape_string($conn, $data['vendor_id']);
+    $inventory = mysqli_real_escape_string($conn, $data['inventory']);
+    $barcode = mysqli_real_escape_string($conn, $data['barcode']);
+    $createdAt = date('Y-m-d H:i:s'); 
+
+    $stmt = $conn->prepare("INSERT INTO products (product_name, price, vendor_id, inventory, barcode, createdAt) VALUES (?, ?, ?, ?, ?, ?)");
+    $stmt->bind_param("sdisss", $product_name, $price, $vendor_id, $inventory, $barcode, $createdAt);
 
     if ($stmt->execute() === TRUE) {
         $last_id = $stmt->insert_id;
         echo json_encode(array("status" => "success", "message" => "New product record created successfully", "product_id" => $last_id));
+
+       
+        $_SESSION['last_service_request_time'] = time();
     } else {
         if ($conn->errno == 1062) {
             $error = $conn->error;
@@ -44,5 +75,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         }
     }
     $stmt->close();
+} else {
+    echo json_encode(array("status" => "error", "message" => "Invalid request method"));
 }
 ?>

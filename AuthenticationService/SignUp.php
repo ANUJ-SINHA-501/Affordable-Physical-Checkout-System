@@ -30,7 +30,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         exit();
     }
 
-    $stmt = $conn->prepare("INSERT INTO vendors (name, email, type, address, gst, phno, password, csrf_token, csrf_token_time) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL)");
+    $stmt = $conn->prepare("INSERT INTO vendors (name, email, type, address, gst, phno, password, auth_token, auth_token_time) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL)");
     if ($stmt === false) {
         die("Error: " . htmlspecialchars($conn->error));
     }

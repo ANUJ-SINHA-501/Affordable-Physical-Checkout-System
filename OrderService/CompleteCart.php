@@ -8,18 +8,34 @@ date_default_timezone_set('Asia/Kolkata');
 include '../db_config.php';
 
 if ($_SERVER["REQUEST_METHOD"] == "POST") {
+    session_start();
+
+    
+    if (isset($_SESSION['last_service_request_time']) && (time() - $_SESSION['last_service_request_time']) >= 10800) {
+
+        // Logout the user
+        $vendor_id = $_SESSION['vendor_id'];
+        $stmt = $conn->prepare("UPDATE vendors SET auth_token = NULL, auth_token_time = NULL WHERE vendor_id = ?");
+        $stmt->bind_param("s", $vendor_id);
+        $stmt->execute();
+        
+        if (session_status() == PHP_SESSION_ACTIVE) {
+            session_unset();
+            session_destroy();
+        }
+
+        echo json_encode(array("status" => "error", "message" => "You were inactive for 3 hours. Please login again."));
+        exit();
+    }
+
     // Lockout time in seconds
     $lockout_time = 20;
     
     
-    session_start();
-
-    // Verify CSRF token
     if (!isset($_SESSION['last_request_time']) || (time() - $_SESSION['last_request_time']) >= $lockout_time) {
-        // Update last request time
         $_SESSION['last_request_time'] = time();
     } else {
-        // Calculate remaining lockout time
+        
         $remaining_time = $lockout_time - (time() - $_SESSION['last_request_time']);
         echo json_encode(array("status" => "error", "message" => "Please wait $remaining_time seconds before making another service request"));
         exit();
@@ -27,7 +43,13 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
 
     $data = json_decode(file_get_contents("php://input"), true);
 
-    // Proceed with order creation
+    
+    if (!isset($data['auth_token']) || $_SESSION['auth_token'] !== $data['auth_token']) {
+        echo json_encode(array("status" => "error", "message" => "Authentication token validation failed"));
+        exit();
+    }
+
+    
     mysqli_autocommit($conn, false);
 
     $line_items = isset($data['line_items']) ? $data['line_items'] : [];
@@ -60,7 +82,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                 exit();
             }
 
-            // Deduct quantity from inventory
+            
             $new_inventory = $inventory - $quantity;
             $stmt = $conn->prepare("UPDATE products SET inventory = ? WHERE product_id = ?");
             $stmt->bind_param("ii", $new_inventory, $product_id);
@@ -99,7 +121,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             $customer_id = $customer['customer_id'];
         } else {
             echo json_encode(array("status" => "error", "message" => "No customer found with this phone number and vendor_id"));
-            exit();
+            
         }
     }
 
@@ -148,6 +170,9 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         mysqli_commit($conn);
 
        
+       
+        $_SESSION['last_service_request_time'] = time();
+
         echo json_encode(array("status" => "success", "message" => "Order created successfully", "order_id" => $order_id, "total_value" => $total_value, "total_products" => $total_products, "total_units" => $total_units, "tax_value" => $tax_value, "created_at" => date('d-m-Y H:i:s')));
     } else {
         mysqli_rollback($conn);

@@ -1,4 +1,3 @@
-// Login.php
 <?php
 header("Access-Control-Allow-Origin: *");
 header("Access-Control-Allow-Methods: GET, POST");
@@ -10,6 +9,24 @@ require '../PHPMailer-master/src/PHPMailer.php';
 require '../PHPMailer-master/src/SMTP.php';
 
 session_start();
+
+
+if (isset($_SESSION['last_service_request_time']) && (time() - $_SESSION['last_service_request_time']) >= 10800) {
+    
+    // Logout the user
+    $vendor_id = $_SESSION['vendor_id'];
+    $stmt = $conn->prepare("UPDATE vendors SET auth_token = NULL, auth_token_time = NULL WHERE vendor_id = ?");
+    $stmt->bind_param("s", $vendor_id);
+    $stmt->execute();
+    
+    if (session_status() == PHP_SESSION_ACTIVE) {
+        session_unset();
+        session_destroy();
+    }
+
+    echo json_encode(array("status" => "error", "message" => "You were inactive for 3 hours. Please login again."));
+    exit();
+}
 
 if ($_SERVER["REQUEST_METHOD"] == "POST") {
     $email = mysqli_real_escape_string($conn, $_POST['email']);
@@ -64,6 +81,9 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             $_SESSION['email'] = $email;
             $_SESSION['row'] = $row;
 
+            
+            $_SESSION['last_service_request_time'] = time();
+
             echo json_encode(array("status" => "success", "message" => "OTP sent to email"));
         } else {
             echo json_encode(array("status" => "error", "message" => "Your Email or Password is invalid"));
@@ -80,19 +100,22 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     if ($otp == $_SESSION['otp']) {
         $_SESSION['login_user'] = $email;
         $_SESSION['vendor_id'] = $row['vendor_id']; 
-        $_SESSION['csrf_token'] = bin2hex(random_bytes(8)); 
+        $_SESSION['auth_token'] = bin2hex(random_bytes(8)); 
 
         date_default_timezone_set('Asia/Kolkata');
 
-        $_SESSION['csrf_token_time'] = time(); 
+        $_SESSION['auth_token_time'] = time(); 
 
-        $csrf_token_time = date('Y-m-d H:i:s', $_SESSION['csrf_token_time']);
+        $auth_token_time = date('Y-m-d H:i:s', $_SESSION['auth_token_time']);
 
-        $stmt = $conn->prepare("UPDATE vendors SET csrf_token = ?, csrf_token_time = ? WHERE email = ?");
-        $stmt->bind_param("sss", $_SESSION['csrf_token'], $csrf_token_time, $email);
+        $stmt = $conn->prepare("UPDATE vendors SET auth_token = ?, auth_token_time = ? WHERE email = ?");
+        $stmt->bind_param("sss", $_SESSION['auth_token'], $auth_token_time, $email);
         $stmt->execute();
 
-        echo json_encode(array("status" => "success", "message" => "Login successful", "csrf_token" => $_SESSION['csrf_token'], "vendor_id" => $_SESSION['vendor_id']));
+        
+        $_SESSION['last_service_request_time'] = time();
+
+        echo json_encode(array("status" => "success", "message" => "Login successful", "auth_token" => $_SESSION['auth_token'], "vendor_id" => $_SESSION['vendor_id']));
     } else {
         
         $_SESSION['otp_attempts']++;
