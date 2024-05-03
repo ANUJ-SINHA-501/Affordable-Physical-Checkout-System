@@ -9,9 +9,7 @@ include '../db_config.php';
 
 session_start();
 
-
 if (isset($_SESSION['last_service_request_time']) && (time() - $_SESSION['last_service_request_time']) >= 10800) {
-    // Logout the user
     $vendor_id = $_SESSION['vendor_id'];
     $stmt = $conn->prepare("UPDATE vendors SET auth_token = NULL, auth_token_time = NULL WHERE vendor_id = ?");
     $stmt->bind_param("s", $vendor_id);
@@ -27,8 +25,11 @@ if (isset($_SESSION['last_service_request_time']) && (time() - $_SESSION['last_s
 }
 
 if ($_SERVER["REQUEST_METHOD"] == "POST") {
-    $data = json_decode(file_get_contents("php://input"), true);
-
+    if ($_SERVER["CONTENT_TYPE"] == "application/x-www-form-urlencoded") {
+        $data = $_POST;
+    } else {
+        $data = json_decode(file_get_contents("php://input"), true);
+    }
     
     if (!isset($data['auth_token'])) {
         error_log("Auth token is missing in the request.");
@@ -41,8 +42,6 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         echo json_encode(array("status" => "error", "message" => "Authentication token validation failed. Hence, new product could not be added."));
         exit();
     }
-    
-
     
     $product_name = mysqli_real_escape_string($conn, $data['product_name']);
     $price = mysqli_real_escape_string($conn, $data['price']);
@@ -58,7 +57,6 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         $last_id = $stmt->insert_id;
         echo json_encode(array("status" => "success", "message" => "New product record created successfully", "product_id" => $last_id));
 
-       
         $_SESSION['last_service_request_time'] = time();
     } else {
         if ($conn->errno == 1062) {
