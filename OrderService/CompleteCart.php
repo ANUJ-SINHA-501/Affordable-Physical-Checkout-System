@@ -10,7 +10,6 @@ include '../db_config.php';
 if ($_SERVER["REQUEST_METHOD"] == "POST") {
     session_start();
 
-    
     if (isset($_SESSION['last_service_request_time']) && (time() - $_SESSION['last_service_request_time']) >= 10800) {
 
         // Logout the user
@@ -102,7 +101,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             }
         } else {
             mysqli_rollback($conn);
-            echo json_encode(array("status" => "error", "message" => "Product not found for ID: $product_id"));
+            echo json_encode(array("status" => "error", "message" => "Product not found for ID: $product_id or the product is not associated with this vendor"));
             exit();
         }
     }
@@ -156,30 +155,87 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         $total_units = $order_details['total_units'];
         $tax_rate = 0.05; 
         $tax_value = $total_value * $tax_rate;
+        $total_payable = $total_value + $tax_value;
 
-        
-        $stmt = $conn->prepare("UPDATE orders SET total_value = ?, total_products = ?, total_units = ?, tax_value = ? WHERE order_id = ?");
-        $stmt->bind_param("diidi", $total_value, $total_products, $total_units, $tax_value, $order_id); 
+        $stmt = $conn->prepare("UPDATE orders SET total_value = ?, total_products = ?, total_units = ?, tax_value = ?, total_payable = ? WHERE order_id = ?");
+        $stmt->bind_param("diiddi", $total_value, $total_products, $total_units, $tax_value, $total_payable, $order_id); 
         if (!$stmt->execute()) {
             mysqli_rollback($conn);
             echo json_encode(array("status" => "error", "message" => $stmt->error));
             exit();
         }
-
         
         mysqli_commit($conn);
 
-       
-       
         $_SESSION['last_service_request_time'] = time();
 
-        echo json_encode(array("status" => "success", "message" => "Order created successfully", "order_id" => $order_id, "total_value" => $total_value, "total_products" => $total_products, "total_units" => $total_units, "tax_value" => $tax_value, "created_at" => date('d-m-Y H:i:s')));
+        echo json_encode(array("status" => "success", "message" => "Order created successfully", "order_id" => $order_id, "total_value" => $total_value, "total_products" => $total_products, "total_units" => $total_units, "tax_value" => $tax_value, "total_payable" => $total_payable, "created_at" => date('d-m-Y H:i:s')));
     } else {
         mysqli_rollback($conn);
         echo json_encode(array("status" => "error", "message" => $stmt->error));
         exit();
     }
-} else {
+}
+if ($_SERVER["REQUEST_METHOD"] == "GET") {
+    if (!isset($_GET['auth_token'])) {
+        error_log("Auth token is missing in the request.");
+        echo json_encode(array("status" => "error", "message" => "Authentication token is missing"));
+        exit();
+    }
+    
+    $stmt = $conn->prepare("SELECT vendor_id FROM vendors WHERE auth_token = ?");
+    $stmt->bind_param("s", $_GET['auth_token']);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    $row = $result->fetch_assoc();
+
+    if (!$row) {
+        error_log("Auth token mismatch. Request token: " . $_GET['auth_token']);
+        echo json_encode(array("status" => "error", "message" => "Authentication token validation failed. Hence, order details could not be fetched."));
+        exit();
+    }
+    
+    $vendor_id = $row['vendor_id'];
+    
+    $stmt = $conn->prepare("SELECT orders.order_id, orders.created_at, orders.total_payable, customers.name AS CustomerName, customers.phone AS CustomerPhone
+                            FROM orders 
+                            LEFT JOIN customers ON orders.customer_id = customers.customer_id
+                            WHERE orders.vendor_id = ?");
+    $stmt->bind_param("i", $vendor_id);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    $orders = $result->fetch_all(MYSQLI_ASSOC);
+    
+    if (count($orders) == 0) {
+        echo json_encode(array("status" => "error", "message" => "No orders present"));
+        exit();
+    }
+
+    $numbered_orders = array();
+    foreach ($orders as $index => $order) {
+        $order_id = $order['order_id'];
+        $stmt = $conn->prepare("SELECT products.product_name, line_items.quantity
+                                FROM line_items 
+                                JOIN products ON line_items.product_id = products.product_id
+                                WHERE line_items.order_id = ?");
+        $stmt->bind_param("i", $order_id);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        $products = $result->fetch_all(MYSQLI_ASSOC);
+
+        $numbered_products = array();
+        foreach ($products as $product_index => $product) {
+            $numbered_products[] = array_merge(array("product_number" => $product_index + 1), $product);
+        }
+
+        $numbered_orders[] = array_merge(array("order_number" => $index + 1), $order, array("products" => $numbered_products));
+    }
+    
+    echo json_encode(array("status" => "success", "message" => "Order details fetched successfully", "orders" => $numbered_orders));
+}
+
+else {
     echo json_encode(array("status" => "error", "message" => "Invalid request method"));
 }
+
 ?>

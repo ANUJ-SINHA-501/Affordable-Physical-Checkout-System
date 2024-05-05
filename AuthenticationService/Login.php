@@ -46,6 +46,11 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             }
 
             $otp = rand(100000, 999999);
+            $hashed_otp = password_hash($otp, PASSWORD_DEFAULT);
+
+            $stmt = $conn->prepare("UPDATE vendors SET otp = ? WHERE email = ?");
+            $stmt->bind_param("ss", $hashed_otp, $email);
+            $stmt->execute();
 
             $mail = new PHPMailer\PHPMailer\PHPMailer;
 
@@ -70,10 +75,6 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                 exit();
             }
 
-            $_SESSION['otp'] = $otp;
-            $_SESSION['email'] = $email;
-            $_SESSION['row'] = $row;
-
             echo json_encode(array("status" => "success", "message" => "OTP sent to email"));
         } else {
             echo json_encode(array("status" => "error", "message" => "Your Email or Password is invalid"));
@@ -83,18 +84,24 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     }
     $stmt->close();
 } elseif ($_SERVER["REQUEST_METHOD"] == "GET") {
-    if (isset($_SESSION['otp'], $_SESSION['email'], $_SESSION['row'])) {
+    if (isset($_GET['otp'], $_GET['email'])) {
         $otp = $_GET['otp'];
-        $email = $_SESSION['email'];
-        $row = $_SESSION['row'];
-        if ($otp == $_SESSION['otp']) {
+        $email = $_GET['email'];
+
+        $stmt = $conn->prepare("SELECT otp, vendor_id, email, password, otp_attempts, auth_token_time FROM vendors WHERE email = ?");
+        $stmt->bind_param("s", $email);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        $row = $result->fetch_assoc();
+
+        if ($row && password_verify($otp, $row['otp'])) {
             $_SESSION['login_user'] = $email;
             $_SESSION['vendor_id'] = $row['vendor_id'];
             $_SESSION['auth_token'] = bin2hex(random_bytes(8));
             date_default_timezone_set('Asia/Kolkata');
             $_SESSION['auth_token_time'] = time();
             $auth_token_time = date('Y-m-d H:i:s', $_SESSION['auth_token_time']);
-            $stmt = $conn->prepare("UPDATE vendors SET auth_token = ?, auth_token_time = ?, otp_attempts = NULL WHERE email = ?");
+            $stmt = $conn->prepare("UPDATE vendors SET auth_token = ?, auth_token_time = ?, otp_attempts = NULL, otp = NULL WHERE email = ?");
             $stmt->bind_param("sss", $_SESSION['auth_token'], $auth_token_time, $email);
             $stmt->execute();
             echo json_encode(array("status" => "success", "message" => "Login successful", "auth_token" => $_SESSION['auth_token'], "vendor_id" => $_SESSION['vendor_id']));
@@ -112,8 +119,64 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             echo json_encode(array("status" => "error", "message" => $message));
         }
     } else {
-        echo json_encode(array("status" => "error", "message" => "Session expired. Please login again."));
+        echo json_encode(array("status" => "error", "message" => "OTP or Email not provided."));
     }
 }
+elseif ($_SERVER["REQUEST_METHOD"] == "PUT") {
+    $content_type = isset($_SERVER["CONTENT_TYPE"]) ? $_SERVER["CONTENT_TYPE"] : null;
+    if (strpos($content_type, "application/x-www-form-urlencoded") !== false) {
+        parse_str(file_get_contents("php://input"), $data);
+    } elseif (strpos($content_type, "application/json") !== false) {
+        $data = json_decode(file_get_contents("php://input"), true);
+    } else {
+        echo json_encode(array("status" => "error", "message" => "Invalid content type"));
+        exit();
+    }
+    
+    if (!isset($data['auth_token']) || !isset($data['fields'])) {
+        echo json_encode(array("status" => "error", "message" => "Authentication token and fields are required"));
+        exit();
+    }
+    
+    $stmt = $conn->prepare("SELECT vendor_id FROM vendors WHERE auth_token = ?");
+    $stmt->bind_param("s", $data['auth_token']);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    $row = $result->fetch_assoc();
 
+    if (!$row) {
+        echo json_encode(array("status" => "error", "message" => "Authentication token validation failed. Hence, vendor could not be updated."));
+        exit();
+    }
+    
+    $vendor_id = $row['vendor_id'];
+    
+    $fields = $data['fields'];
+    $allowed_fields = array("name", "email", "type", "address", "gst", "phno", "password"); // Add or remove field names as needed
+    $update_fields = "";
+    foreach ($fields as $key => $value) {
+        if (!in_array($key, $allowed_fields)) {
+            echo json_encode(array("status" => "error", "message" => "Invalid field name: " . $key));
+            exit();
+        }
+        if ($key == "password") {
+            $value = password_hash($value, PASSWORD_DEFAULT); // Hash the password before storing it
+        }
+        if ($update_fields != "") {
+            $update_fields .= ", ";
+        }
+        $update_fields .= $key . " = '" . mysqli_real_escape_string($conn, $value) . "'";
+    }
+
+    $query = "UPDATE vendors SET " . $update_fields . " WHERE vendor_id = ?";
+    $stmt = $conn->prepare($query);
+    $stmt->bind_param("i", $vendor_id);
+
+    if ($stmt->execute() === TRUE) {
+        echo json_encode(array("status" => "success", "message" => "Vendor details updated successfully"));
+    } else {
+        echo json_encode(array("status" => "error", "message" => $stmt->error));
+    }
+    $stmt->close();
+}
 ?>
