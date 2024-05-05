@@ -1,35 +1,74 @@
 <?php
 header("Access-Control-Allow-Origin: *");
-header("Access-Control-Allow-Methods: POST");
+header("Access-Control-Allow-Methods: POST, GET");
 header("Access-Control-Allow-Headers: Content-Type");
 
 date_default_timezone_set('Asia/Kolkata');
 
 include '../db_config.php';
 
+session_start();
+
+if (isset($_SESSION['last_service_request_time']) && (time() - $_SESSION['last_service_request_time']) >= 10800) {
+    $vendor_id = $_SESSION['vendor_id'];
+    $stmt = $conn->prepare("UPDATE vendors SET auth_token = NULL, auth_token_time = NULL WHERE vendor_id = ?");
+    $stmt->bind_param("s", $vendor_id);
+    $stmt->execute();
+    
+    if (session_status() == PHP_SESSION_ACTIVE) {
+        session_unset();
+        session_destroy();
+    }
+
+    echo json_encode(array("status" => "error", "message" => "You were inactive for 3 hours. Please login again."));
+    exit();
+}
+
 if ($_SERVER["REQUEST_METHOD"] == "POST") {
-    session_start();
+    error_log("Raw request body: " . file_get_contents("php://input"));
+    $data = json_decode(file_get_contents("php://input"), true);
+    error_log("Decoded request body: " . print_r($data, true));
 
-    if (isset($_SESSION['last_service_request_time']) && (time() - $_SESSION['last_service_request_time']) >= 10800) {
+    if (!isset($data['auth_token'])) {
+        error_log("Auth token is missing in the request.");
+        echo json_encode(array("status" => "error", "message" => "Authentication token is missing"));
+        exit();
+    }
+    
+    $stmt = $conn->prepare("SELECT vendor_id FROM vendors WHERE auth_token = ?");
+    $stmt->bind_param("s", $data['auth_token']);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    $row = $result->fetch_assoc();
 
-        // Logout the user
-        $vendor_id = $_SESSION['vendor_id'];
-        $stmt = $conn->prepare("UPDATE vendors SET auth_token = NULL, auth_token_time = NULL WHERE vendor_id = ?");
-        $stmt->bind_param("s", $vendor_id);
-        $stmt->execute();
-        
-        if (session_status() == PHP_SESSION_ACTIVE) {
-            session_unset();
-            session_destroy();
-        }
+    if (!$row) {
+        error_log("Auth token mismatch. Request token: " . $data['auth_token']);
+        echo json_encode(array("status" => "error", "message" => "Authentication token validation failed. Hence, order could not be created."));
+        exit();
+    }
+    
+    $vendor_id = $row['vendor_id'];
 
-        echo json_encode(array("status" => "error", "message" => "You were inactive for 3 hours. Please login again."));
+    $auth_token = mysqli_real_escape_string($conn, $data['auth_token']);
+    $stmt = $conn->prepare("SELECT vendor_id FROM vendors WHERE auth_token = ?");
+    $stmt->bind_param("s", $auth_token);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    $vendor = $result->fetch_assoc();
+
+    if ($vendor) {
+        $vendor_id = $vendor['vendor_id'];
+    } else {
+        echo json_encode(array("status" => "error", "message" => "Vendor not found for auth_token: $auth_token"));
         exit();
     }
 
-    // Lockout time in seconds
+    if (!isset($data['auth_token']) || $auth_token !== $data['auth_token']) {
+        echo json_encode(array("status" => "error", "message" => "Authentication token validation failed"));
+        exit();
+    }
+
     $lockout_time = 20;
-    
     
     if (!isset($_SESSION['last_request_time']) || (time() - $_SESSION['last_request_time']) >= $lockout_time) {
         $_SESSION['last_request_time'] = time();
@@ -40,15 +79,6 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         exit();
     }
 
-    $data = json_decode(file_get_contents("php://input"), true);
-
-    
-    if (!isset($data['auth_token']) || $_SESSION['auth_token'] !== $data['auth_token']) {
-        echo json_encode(array("status" => "error", "message" => "Authentication token validation failed"));
-        exit();
-    }
-
-    
     mysqli_autocommit($conn, false);
 
     $line_items = isset($data['line_items']) ? $data['line_items'] : [];
@@ -60,9 +90,8 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         exit();
     }
 
-    $vendor_id = mysqli_real_escape_string($conn, $data['vendor_id']);
-
-    foreach ($line_items as $line_item) {
+    if (isset($data['line_items']) && is_array($data['line_items'])) {
+    foreach ($data['line_items'] as $line_item) {
         $product_id = mysqli_real_escape_string($conn, $line_item['product_id']);
         $quantity = mysqli_real_escape_string($conn, $line_item['quantity']);
 
@@ -81,7 +110,6 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                 exit();
             }
 
-            
             $new_inventory = $inventory - $quantity;
             $stmt = $conn->prepare("UPDATE products SET inventory = ? WHERE product_id = ?");
             $stmt->bind_param("ii", $new_inventory, $product_id);
@@ -91,7 +119,6 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                 exit();
             }
 
-            
             $stmt = $conn->prepare("INSERT INTO line_items (product_id, quantity, vendor_id) VALUES (?, ?, ?)");
             $stmt->bind_param("iii", $product_id, $quantity, $vendor_id);
             if (!$stmt->execute()) {
@@ -105,8 +132,11 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             exit();
         }
     }
-
-    
+    }
+    else {
+    echo json_encode(array("status" => "error", "message" => "No line items provided or line items is not an array"));
+    exit();
+    }
     $customer_id = null;
 
     if ($customer_phone) {
@@ -124,13 +154,11 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         }
     }
 
-    
     $stmt = $conn->prepare("INSERT INTO orders (customer_id, vendor_id, created_at) VALUES (?, ?, NOW())");
     $stmt->bind_param("ii", $customer_id, $vendor_id);
     if ($stmt->execute()) {
         $order_id = $stmt->insert_id;
 
-        
         $stmt = $conn->prepare("UPDATE line_items SET order_id = ? WHERE vendor_id = ? AND order_id IS NULL");
         $stmt->bind_param("ii", $order_id, $vendor_id);
         if (!$stmt->execute()) {
@@ -139,7 +167,6 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             exit();
         }
 
-        
         $stmt = $conn->prepare("SELECT SUM(products.price * line_items.quantity) AS total_value, 
                                         COUNT(DISTINCT line_items.product_id) AS total_products,
                                         SUM(line_items.quantity) AS total_units
@@ -169,13 +196,14 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
 
         $_SESSION['last_service_request_time'] = time();
 
-        echo json_encode(array("status" => "success", "message" => "Order created successfully", "order_id" => $order_id, "total_value" => $total_value, "total_products" => $total_products, "total_units" => $total_units, "tax_value" => $tax_value, "total_payable" => $total_payable, "created_at" => date('d-m-Y H:i:s')));
+        echo json_encode(array("status" => "success", "message" => "Order created successfully", "order_id" => $order_id, "total_value" => $total_value, "total_products" => $total_products, "total_units" => $total_units        , "tax_value" => $tax_value, "total_payable" => $total_payable, "created_at" => date('d-m-Y H:i:s')));
     } else {
         mysqli_rollback($conn);
         echo json_encode(array("status" => "error", "message" => $stmt->error));
         exit();
     }
 }
+
 if ($_SERVER["REQUEST_METHOD"] == "GET") {
     if (!isset($_GET['auth_token'])) {
         error_log("Auth token is missing in the request.");
@@ -233,9 +261,4 @@ if ($_SERVER["REQUEST_METHOD"] == "GET") {
     
     echo json_encode(array("status" => "success", "message" => "Order details fetched successfully", "orders" => $numbered_orders));
 }
-
-else {
-    echo json_encode(array("status" => "error", "message" => "Invalid request method"));
-}
-
 ?>
