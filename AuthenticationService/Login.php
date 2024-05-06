@@ -83,8 +83,25 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         echo json_encode(array("status" => "error", "message" => "Email not found"));
     }
     $stmt->close();
-} elseif ($_SERVER["REQUEST_METHOD"] == "GET") {
-    if (isset($_GET['otp'], $_GET['email'])) {
+}
+elseif ($_SERVER["REQUEST_METHOD"] == "GET") {
+    if (isset($_GET['auth_token'])) {
+        
+        $auth_token = $_GET['auth_token'];
+
+        $stmt = $conn->prepare("SELECT vendor_id, name, email, type, address, gst, phno FROM vendors WHERE auth_token = ?");
+        $stmt->bind_param("s", $auth_token);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        $row = $result->fetch_assoc();
+
+        if ($row) {
+            echo json_encode(array("status" => "success", "message" => "Vendor details fetched successfully", "data" => $row));
+        } else {
+            echo json_encode(array("status" => "error", "message" => "Authentication failed"));
+        }
+    } elseif (isset($_GET['otp'], $_GET['email'])) {
+        
         $otp = $_GET['otp'];
         $email = $_GET['email'];
 
@@ -119,9 +136,10 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             echo json_encode(array("status" => "error", "message" => $message));
         }
     } else {
-        echo json_encode(array("status" => "error", "message" => "OTP or Email not provided."));
+        echo json_encode(array("status" => "error", "message" => "Required parameters not provided."));
     }
 }
+
 elseif ($_SERVER["REQUEST_METHOD"] == "PUT") {
     $content_type = isset($_SERVER["CONTENT_TYPE"]) ? $_SERVER["CONTENT_TYPE"] : null;
     if (strpos($content_type, "application/x-www-form-urlencoded") !== false) {
@@ -152,7 +170,7 @@ elseif ($_SERVER["REQUEST_METHOD"] == "PUT") {
     $vendor_id = $row['vendor_id'];
     
     $fields = $data['fields'];
-    $allowed_fields = array("name", "email", "type", "address", "gst", "phno", "password"); // Add or remove field names as needed
+    $allowed_fields = array("name", "email", "type", "address", "gst", "phno", "password"); 
     $update_fields = "";
     foreach ($fields as $key => $value) {
         if (!in_array($key, $allowed_fields)) {
@@ -160,7 +178,7 @@ elseif ($_SERVER["REQUEST_METHOD"] == "PUT") {
             exit();
         }
         if ($key == "password") {
-            $value = password_hash($value, PASSWORD_DEFAULT); // Hash the password before storing it
+            $value = password_hash($value, PASSWORD_DEFAULT); 
         }
         if ($update_fields != "") {
             $update_fields .= ", ";

@@ -109,17 +109,37 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         echo json_encode(array("status" => "error", "message" => "Authentication token validation failed. Hence, product details could not be fetched."));
         exit();
     }
-    
+
     $vendor_id = $row['vendor_id'];
-    
-    $stmt = $conn->prepare("SELECT product_id AS id, product_name, price, barcode FROM products WHERE vendor_id = ?");
-    $stmt->bind_param("s", $vendor_id);
-    $stmt->execute();
-    $result = $stmt->get_result();
-    $products = $result->fetch_all(MYSQLI_ASSOC);
-    
-    echo json_encode(array("status" => "success", "message" => "Product details fetched successfully", "products" => $products));
+
+    if (isset($_GET['product_id'])) {
+        
+        $product_id = $_GET['product_id'];
+
+        $stmt = $conn->prepare("SELECT product_id AS id, product_name, price, inventory, barcode FROM products WHERE product_id = ? AND vendor_id = ?");
+        $stmt->bind_param("ss", $product_id, $vendor_id);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        $product = $result->fetch_assoc();
+
+        if ($product) {
+            echo json_encode(array("status" => "success", "message" => "Product details fetched successfully", "product" => $product));
+        } else {
+            echo json_encode(array("status" => "error", "message" => "Product not found"));
+        }
+    } else {
+        
+        $stmt = $conn->prepare("SELECT product_id AS id, product_name, price, barcode FROM products WHERE vendor_id = ? AND deleted = FALSE");
+        $stmt->bind_param("s", $vendor_id);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        $products = $result->fetch_all(MYSQLI_ASSOC);
+
+        echo json_encode(array("status" => "success", "message" => "Product details fetched successfully", "products" => $products));
+    }
 }
+
+
 elseif ($_SERVER["REQUEST_METHOD"] == "PUT") {
     $data = json_decode(file_get_contents("php://input"), true);
     
@@ -174,7 +194,7 @@ elseif ($_SERVER["REQUEST_METHOD"] == "DELETE") {
         exit();
     }
     
-    $stmt = $conn->prepare("SELECT vendor_id FROM vendors WHERE auth_token = ?");
+    $stmt = $conn->prepare("SELECT * FROM vendors WHERE auth_token = ?");
     $stmt->bind_param("s", $data['auth_token']);
     $stmt->execute();
     $result = $stmt->get_result();
@@ -185,13 +205,11 @@ elseif ($_SERVER["REQUEST_METHOD"] == "DELETE") {
         exit();
     }
     
-    $vendor_id = $row['vendor_id'];
-    
-    $stmt = $conn->prepare("DELETE FROM products WHERE product_id = ? AND vendor_id = ?");
-    $stmt->bind_param("ii", $data['product_id'], $vendor_id);
+    $stmt = $conn->prepare("UPDATE products SET deleted = TRUE WHERE product_id = ?");
+    $stmt->bind_param("i", $data['product_id']);
 
     if ($stmt->execute() === TRUE) {
-        echo json_encode(array("status" => "success", "message" => "Product record deleted successfully"));
+        echo json_encode(array("status" => "success", "message" => "Product deleted successfully"));
     } else {
         echo json_encode(array("status" => "error", "message" => $stmt->error));
     }
